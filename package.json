@@ -1,0 +1,25 @@
+{
+  "name": "electron-local-screenshot-tool",
+  "version": "1.0.0",
+  "description": "A macOS desktop application for capturing screenshots with a drag-to-select interface",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "electron",
+    "screenshot",
+    "desktop",
+    "macos",
+    "capture"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "electron": "^29.0.0",
+    "electron-store": "^10.0.1",
+    "fs-extra": "^11.2.0"
+  }
+}

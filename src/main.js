@@ -1,0 +1,355 @@
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  Tray,
+  Menu,
+  nativeImage,
+  clipboard,
+  shell,
+  dialog,
+  desktopCapturer
+} = require('electron');
+const path = require('path');
+const fs = require('fs-extra');
+
+// We'll initialize the store after imports
+let store;
+
+// Initialize app after we have the store
+async function initializeApp() {
+  // Initialize settings store using dynamic import
+  const { default: Store } = await import('electron-store');
+  
+  store = new Store({
+    defaults: {
+      saveDirectory: app.getPath('pictures'),
+      saveToClipboard: true,
+      saveToFile: true
+    }
+  });
+  
+  createMainWindow();
+  createTray();
+  
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow();
+    }
+  });
+}
+
+let mainWindow = null;
+let captureWindow = null;
+let tray = null;
+let isCapturing = false;
+
+function createMainWindow() {
+  mainWindow = new BrowserWindow({
+    width: 400,
+    height: 300,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    },
+    show: false,
+    icon: path.join(__dirname, '../assets/icon.png')
+  });
+
+  mainWindow.loadFile(path.join(__dirname, 'renderer/index.html'));
+  
+  // Hide window instead of closing when user clicks the close button
+  mainWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+      return false;
+    }
+    return true;
+  });
+}
+
+function createCaptureWindow() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.bounds;
+
+  captureWindow = new BrowserWindow({
+    x: 0,
+    y: 0,
+    width,
+    height,
+    transparent: true,
+    frame: false,
+    fullscreen: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  captureWindow.loadFile(path.join(__dirname, 'renderer/capture.html'));
+
+  captureWindow.on('closed', () => {
+    captureWindow = null;
+    isCapturing = false;
+  });
+}
+
+function createTray() {
+  // Check if tray already exists
+  if (tray !== null) {
+    console.log('Tray already exists, not creating another one');
+    return;
+  }
+
+  // Create a simple 16x16 icon as a template image for macOS
+  const iconSize = 16;
+  const trayIcon = nativeImage.createEmpty();
+  
+  // Create a simple white dot pattern for the icon
+  const imageData = Buffer.alloc(iconSize * iconSize * 4);
+  
+  // Fill with a simple pattern (white circle)
+  for (let y = 0; y < iconSize; y++) {
+    for (let x = 0; x < iconSize; x++) {
+      const offset = (y * iconSize + x) * 4;
+      const centerX = iconSize / 2;
+      const centerY = iconSize / 2;
+      const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+      
+      if (distance < iconSize / 3) {
+        // White pixel (R, G, B, A)
+        imageData[offset] = 255;     // R
+        imageData[offset + 1] = 255; // G
+        imageData[offset + 2] = 255; // B
+        imageData[offset + 3] = 255; // A
+      } else {
+        // Transparent pixel
+        imageData[offset] = 0;       // R
+        imageData[offset + 1] = 0;   // G
+        imageData[offset + 2] = 0;   // B
+        imageData[offset + 3] = 0;   // A
+      }
+    }
+  }
+  
+  const icon = nativeImage.createFromBuffer(imageData, { width: iconSize, height: iconSize });
+  icon.setTemplateImage(true); // Important for macOS
+  
+  // Create the tray
+  tray = new Tray(icon);
+  
+  // Set up the context menu
+  const contextMenu = Menu.buildFromTemplate([
+    { 
+      label: 'Capture Screenshot', 
+      click: () => {
+        startCapture();
+      } 
+    },
+    { 
+      label: 'Settings',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    },
+    { type: 'separator' },
+    { 
+      label: 'Quit', 
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      } 
+    }
+  ]);
+  
+  tray.setToolTip('Screenshot Tool');
+  tray.setContextMenu(contextMenu);
+  
+  tray.on('click', () => {
+    startCapture();
+  });
+  
+  console.log('Tray created with programmatic icon');
+}
+
+function startCapture() {
+  if (isCapturing) return;
+  
+  isCapturing = true;
+  
+  if (!captureWindow) {
+    createCaptureWindow();
+  }
+  
+  captureWindow.show();
+}
+
+app.whenReady().then(initializeApp);
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  app.isQuitting = true;
+});
+
+// IPC events for screenshot capture
+ipcMain.on('start-capture', () => {
+  startCapture();
+});
+
+ipcMain.on('cancel-capture', () => {
+  if (captureWindow) {
+    captureWindow.hide();
+    isCapturing = false;
+  }
+});
+
+ipcMain.on('capture-screenshot', async (event, { x, y, width, height }) => {
+  try {
+    // Hide the capture window to avoid it being in the screenshot
+    if (captureWindow) {
+      captureWindow.hide();
+    }
+    
+    // Wait a bit for UI to disappear
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Capture the specified screen region
+    const sources = await screen.getAllDisplays();
+    const primaryDisplay = sources[0]; // Assuming primary display for simplicity
+    
+    const image = await screenshot({
+      x: Math.floor(x),
+      y: Math.floor(y),
+      width: Math.floor(width),
+      height: Math.floor(height)
+    });
+    
+    // Save to clipboard if enabled
+    if (store.get('saveToClipboard')) {
+      clipboard.writeImage(image);
+    }
+    
+    // Save to file if enabled
+    if (store.get('saveToFile')) {
+      const saveDirectory = store.get('saveDirectory');
+      const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
+      const filePath = path.join(saveDirectory, `screenshot-${timestamp}.png`);
+      
+      fs.ensureDirSync(saveDirectory);
+      fs.writeFileSync(filePath, image.toPNG());
+      
+      event.reply('screenshot-saved', {
+        success: true,
+        path: filePath
+      });
+    } else {
+      event.reply('screenshot-saved', {
+        success: true
+      });
+    }
+    
+    isCapturing = false;
+    
+  } catch (error) {
+    console.error('Failed to capture screenshot:', error);
+    event.reply('screenshot-saved', {
+      success: false,
+      error: error.message
+    });
+    isCapturing = false;
+  }
+});
+
+// Helper function to take a screenshot of a specific region
+async function screenshot({ x, y, width, height }) {
+  // Ensure we don't have invalid dimensions
+  if (width < 1 || height < 1) {
+    throw new Error('Invalid screenshot dimensions');
+  }
+  
+  // Get all screens
+  const primaryDisplay = screen.getPrimaryDisplay();
+  
+  // Use desktopCapturer to capture the primary screen
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: primaryDisplay.bounds.width,
+      height: primaryDisplay.bounds.height
+    }
+  });
+  
+  // We'll use the first source which should be the primary display
+  const source = sources[0];
+  
+  // If we couldn't get a source, throw an error
+  if (!source) {
+    throw new Error('Could not capture screen');
+  }
+  
+  // Get the thumbnail which is the full screenshot
+  const thumbnail = source.thumbnail;
+  
+  // Crop to the selected region
+  return thumbnail.crop({ x, y, width, height });
+}
+
+// IPC for settings
+ipcMain.handle('get-settings', async () => {
+  return {
+    saveDirectory: store.get('saveDirectory'),
+    saveToClipboard: store.get('saveToClipboard'),
+    saveToFile: store.get('saveToFile')
+  };
+});
+
+ipcMain.on('set-settings', (event, settings) => {
+  if (settings.saveDirectory) {
+    store.set('saveDirectory', settings.saveDirectory);
+  }
+  if (typeof settings.saveToClipboard === 'boolean') {
+    store.set('saveToClipboard', settings.saveToClipboard);
+  }
+  if (typeof settings.saveToFile === 'boolean') {
+    store.set('saveToFile', settings.saveToFile);
+  }
+});
+
+ipcMain.on('choose-directory', async (event) => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory']
+  });
+  
+  if (!result.canceled && result.filePaths.length > 0) {
+    store.set('saveDirectory', result.filePaths[0]);
+    event.reply('directory-selected', result.filePaths[0]);
+  }
+});
+
+// Open the screenshot folder
+ipcMain.on('open-save-directory', () => {
+  const saveDirectory = store.get('saveDirectory');
+  if (fs.existsSync(saveDirectory)) {
+    shell.openPath(saveDirectory);
+  }
+});
+
+// This line should be at the end of the file if it's not already there
+app.whenReady().then(() => {
+  // Make sure we only initialize once
+  if (!mainWindow) {
+    initializeApp();
+  }
+}); 

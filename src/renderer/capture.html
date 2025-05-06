@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screenshot Capture</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      user-select: none;
+      cursor: crosshair;
+      background-color: rgba(0, 0, 0, 0.2);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    
+    #selection {
+      position: absolute;
+      border: 2px solid #007aff;
+      background-color: rgba(0, 122, 255, 0.1);
+      pointer-events: none;
+      z-index: 9999;
+    }
+    
+    #dimensions {
+      position: absolute;
+      background-color: #007aff;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      z-index: 10000;
+      pointer-events: none;
+    }
+    
+    #controls {
+      position: absolute;
+      display: none;
+      z-index: 10001;
+    }
+    
+    #controls button {
+      background-color: #007aff;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      margin-right: 8px;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    
+    #controls button:hover {
+      background-color: #0062cc;
+    }
+    
+    #controls button.cancel {
+      background-color: #ff3b30;
+    }
+    
+    #controls button.cancel:hover {
+      background-color: #d63429;
+    }
+    
+    .instructions {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 14px;
+      pointer-events: none;
+      z-index: 10002;
+    }
+  </style>
+</head>
+<body>
+  <div id="selection"></div>
+  <div id="dimensions"></div>
+  <div id="controls">
+    <button id="captureBtn">Capture</button>
+    <button id="cancelBtn" class="cancel">Cancel</button>
+  </div>
+  <div class="instructions">
+    Click and drag to select the area for your screenshot. Press ESC to cancel.
+  </div>
+  
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    // Elements
+    const selectionElement = document.getElementById('selection');
+    const dimensionsElement = document.getElementById('dimensions');
+    const controlsElement = document.getElementById('controls');
+    const captureBtn = document.getElementById('captureBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    
+    let isSelecting = false;
+    let startX = 0;
+    let startY = 0;
+    let endX = 0;
+    let endY = 0;
+    
+    // Helper functions
+    function updateSelectionElement() {
+      const x = Math.min(startX, endX);
+      const y = Math.min(startY, endY);
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
+      
+      selectionElement.style.left = `${x}px`;
+      selectionElement.style.top = `${y}px`;
+      selectionElement.style.width = `${width}px`;
+      selectionElement.style.height = `${height}px`;
+      
+      dimensionsElement.textContent = `${width} × ${height}`;
+      dimensionsElement.style.left = `${x + width / 2 - dimensionsElement.offsetWidth / 2}px`;
+      dimensionsElement.style.top = `${y - 30}px`;
+      
+      // Position controls below the selection
+      controlsElement.style.left = `${x}px`;
+      controlsElement.style.top = `${y + height + 10}px`;
+    }
+    
+    function resetSelection() {
+      selectionElement.style.width = '0';
+      selectionElement.style.height = '0';
+      dimensionsElement.style.display = 'none';
+      controlsElement.style.display = 'none';
+      isSelecting = false;
+    }
+    
+    function captureScreenshot() {
+      const x = Math.min(startX, endX);
+      const y = Math.min(startY, endY);
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
+      
+      if (width > 1 && height > 1) {
+        ipcRenderer.send('capture-screenshot', { x, y, width, height });
+      } else {
+        cancelCapture();
+      }
+    }
+    
+    function cancelCapture() {
+      ipcRenderer.send('cancel-capture');
+    }
+    
+    // Mouse event handlers
+    document.addEventListener('mousedown', (e) => {
+      // Only handle left mouse button
+      if (e.button !== 0) return;
+      
+      isSelecting = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      endX = e.clientX;
+      endY = e.clientY;
+      
+      selectionElement.style.display = 'block';
+      dimensionsElement.style.display = 'block';
+      controlsElement.style.display = 'none';
+      
+      updateSelectionElement();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+      if (!isSelecting) return;
+      
+      endX = e.clientX;
+      endY = e.clientY;
+      
+      updateSelectionElement();
+    });
+    
+    document.addEventListener('mouseup', (e) => {
+      if (!isSelecting) return;
+      
+      isSelecting = false;
+      endX = e.clientX;
+      endY = e.clientY;
+      
+      updateSelectionElement();
+      
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
+      
+      if (width > 5 && height > 5) {
+        controlsElement.style.display = 'block';
+      } else {
+        resetSelection();
+      }
+    });
+    
+    // Button event handlers
+    captureBtn.addEventListener('click', captureScreenshot);
+    cancelBtn.addEventListener('click', cancelCapture);
+    
+    // Keyboard event handlers
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        cancelCapture();
+      } else if (e.key === 'Enter') {
+        captureScreenshot();
+      }
+    });
+    
+    // IPC event handlers
+    ipcRenderer.on('screenshot-saved', () => {
+      resetSelection();
+    });
+  </script>
+</body>
+</html> 
