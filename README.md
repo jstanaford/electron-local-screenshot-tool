@@ -57,4 +57,4 @@ npm run dev
 
 ## License
 
-ISC 
+MIT License - See the [LICENSE](LICENSE) file for details. 
