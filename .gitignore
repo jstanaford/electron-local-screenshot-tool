@@ -72,3 +72,6 @@ typings/
 .vscode/
 *.swp
 *.swo
+
+#ignore custom:
+GOALS.md
