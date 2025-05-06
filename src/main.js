@@ -44,11 +44,13 @@ let mainWindow = null;
 let captureWindow = null;
 let tray = null;
 let isCapturing = false;
+let toastWindow = null;
+let lastScreenshotPath = null;
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 400,
-    height: 300,
+    width: 800,
+    height: 600,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -215,6 +217,76 @@ ipcMain.on('cancel-capture', () => {
   }
 });
 
+function createToastWindow(message, screenshotPath) {
+  // Save the screenshot path for later use
+  if (screenshotPath) {
+    lastScreenshotPath = screenshotPath;
+  }
+  
+  // Don't create multiple toast windows
+  if (toastWindow) {
+    toastWindow.close();
+    toastWindow = null;
+  }
+  
+  // Get primary display dimensions
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.workAreaSize;
+  
+  // Create a small window for the toast
+  toastWindow = new BrowserWindow({
+    width: 300,
+    height: 60,
+    x: 20,
+    y: height - 80, // Position at bottom left with some margin
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+  
+  // Load the toast HTML file
+  toastWindow.loadFile(path.join(__dirname, 'renderer/toast.html'));
+  
+  // When ready to show, send data and make visible
+  toastWindow.once('ready-to-show', () => {
+    toastWindow.webContents.send('toast-data', {
+      message: message,
+      hasPath: !!screenshotPath
+    });
+    toastWindow.show();
+  });
+  
+  // Clean up on close
+  toastWindow.on('closed', () => {
+    toastWindow = null;
+  });
+}
+
+// Add this IPC handler for the 'open-screenshot-location' event
+ipcMain.on('open-screenshot-location', () => {
+  if (lastScreenshotPath) {
+    // Get the directory path from the file path
+    const directoryPath = path.dirname(lastScreenshotPath);
+    shell.openPath(directoryPath);
+  }
+});
+
+// Add this IPC handler for the 'close-toast' event
+ipcMain.on('close-toast', () => {
+  if (toastWindow) {
+    toastWindow.close();
+  }
+});
+
+// Now modify the existing capture-screenshot handler to show a toast notification
 ipcMain.on('capture-screenshot', async (event, { x, y, width, height }) => {
   try {
     // Hide the capture window to avoid it being in the screenshot
@@ -250,11 +322,17 @@ ipcMain.on('capture-screenshot', async (event, { x, y, width, height }) => {
       fs.ensureDirSync(saveDirectory);
       fs.writeFileSync(filePath, image.toPNG());
       
+      // Show toast notification with file path
+      createToastWindow('Screenshot saved!', filePath);
+      
       event.reply('screenshot-saved', {
         success: true,
         path: filePath
       });
     } else {
+      // Show toast notification without file path
+      createToastWindow('Screenshot copied to clipboard!');
+      
       event.reply('screenshot-saved', {
         success: true
       });
@@ -264,6 +342,8 @@ ipcMain.on('capture-screenshot', async (event, { x, y, width, height }) => {
     
   } catch (error) {
     console.error('Failed to capture screenshot:', error);
+    // Show error toast
+    createToastWindow(`Error: ${error.message}`);
     event.reply('screenshot-saved', {
       success: false,
       error: error.message
