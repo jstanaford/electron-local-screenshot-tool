@@ -104,6 +104,28 @@
       width: 100%;
       text-align: center;
     }
+    
+    input[type="text"].text-input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    
+    #remoteSettingsContainer {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eee;
+    }
+    
+    .settings-group h2 {
+      font-size: 16px;
+      margin-top: 0;
+      margin-bottom: 15px;
+    }
   </style>
 </head>
 <body>
@@ -137,6 +159,24 @@
       </div>
     </div>
     
+    <div class="settings-group">
+      <h2>Remote Upload Settings</h2>
+      <div class="setting-item">
+        <label for="enableRemoteUpload">
+          <input type="checkbox" id="enableRemoteUpload">
+          Enable remote upload
+        </label>
+      </div>
+      
+      <div class="setting-item" id="remoteSettingsContainer">
+        <label for="endpointUrl">Endpoint URL:</label>
+        <input type="text" id="endpointUrl" class="text-input" placeholder="https://example.com/wp-json/wpms/v1/upload">
+        
+        <label for="authToken">Authentication Token:</label>
+        <input type="text" id="authToken" class="text-input" placeholder="1234567890abcdef1234567890abcdef">
+      </div>
+    </div>
+    
     <div id="recentScreenshot" class="recent-screenshot" style="display: none;">
       <h1>Last Screenshot</h1>
       <img id="screenshotPreview" src="" alt="Recent screenshot">
@@ -159,6 +199,10 @@
     const captureButton = document.getElementById('captureButton');
     const recentScreenshotDiv = document.getElementById('recentScreenshot');
     const screenshotPreview = document.getElementById('screenshotPreview');
+    const enableRemoteUploadCheckbox = document.getElementById('enableRemoteUpload');
+    const remoteSettingsContainer = document.getElementById('remoteSettingsContainer');
+    const endpointUrlInput = document.getElementById('endpointUrl');
+    const authTokenInput = document.getElementById('authToken');
     
     // Load settings
     async function loadSettings() {
@@ -167,6 +211,14 @@
       saveToClipboardCheckbox.checked = settings.saveToClipboard;
       saveToFileCheckbox.checked = settings.saveToFile;
       saveDirectoryElement.textContent = settings.saveDirectory;
+      
+      // Load remote upload settings
+      enableRemoteUploadCheckbox.checked = settings.enableRemoteUpload || false;
+      endpointUrlInput.value = settings.endpointUrl || '';
+      authTokenInput.value = settings.authToken || '';
+      
+      // Toggle visibility of remote settings based on checkbox
+      remoteSettingsContainer.style.display = enableRemoteUploadCheckbox.checked ? 'block' : 'none';
     }
     
     // Event listeners
@@ -192,6 +244,26 @@
     
     captureButton.addEventListener('click', () => {
       ipcRenderer.send('start-capture');
+    });
+    
+    // Add event listeners for the new settings
+    enableRemoteUploadCheckbox.addEventListener('change', () => {
+      remoteSettingsContainer.style.display = enableRemoteUploadCheckbox.checked ? 'block' : 'none';
+      ipcRenderer.send('set-settings', {
+        enableRemoteUpload: enableRemoteUploadCheckbox.checked
+      });
+    });
+    
+    endpointUrlInput.addEventListener('blur', () => {
+      ipcRenderer.send('set-settings', {
+        endpointUrl: endpointUrlInput.value.trim()
+      });
+    });
+    
+    authTokenInput.addEventListener('blur', () => {
+      ipcRenderer.send('set-settings', {
+        authToken: authTokenInput.value.trim()
+      });
     });
     
     // IPC event listeners

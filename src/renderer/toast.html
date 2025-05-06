@@ -30,10 +30,16 @@
       margin-right: 15px;
     }
     
+    .toast-actions {
+      display: flex;
+      gap: 15px;
+    }
+    
     .toast-link {
       color: #007aff;
       text-decoration: none;
       cursor: pointer;
+      white-space: nowrap;
     }
     
     .toast-link:hover {
@@ -44,7 +50,10 @@
 <body>
   <div class="toast">
     <span class="toast-message" id="toast-message">Screenshot saved!</span>
-    <a class="toast-link" id="toast-link" href="#">Open location</a>
+    <div class="toast-actions">
+      <a class="toast-link" id="location-link" href="#">Open location</a>
+      <a class="toast-link" id="remote-link" href="#">View online</a>
+    </div>
   </div>
   
   <script>
@@ -52,7 +61,8 @@
     
     // Get elements
     const toastMessage = document.getElementById('toast-message');
-    const toastLink = document.getElementById('toast-link');
+    const locationLink = document.getElementById('location-link');
+    const remoteLink = document.getElementById('remote-link');
     
     // Listen for message from main process
     ipcRenderer.on('toast-data', (event, data) => {
@@ -61,12 +71,21 @@
       }
       
       if (data.hasPath) {
-        toastLink.style.display = 'inline';
-        toastLink.addEventListener('click', () => {
+        locationLink.style.display = 'inline';
+        locationLink.addEventListener('click', () => {
           ipcRenderer.send('open-screenshot-location');
         });
       } else {
-        toastLink.style.display = 'none';
+        locationLink.style.display = 'none';
+      }
+      
+      if (data.remoteUrl) {
+        remoteLink.style.display = 'inline';
+        remoteLink.addEventListener('click', () => {
+          ipcRenderer.send('open-remote-url', data.remoteUrl);
+        });
+      } else {
+        remoteLink.style.display = 'none';
       }
     });
     

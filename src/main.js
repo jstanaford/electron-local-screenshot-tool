@@ -13,6 +13,8 @@ const {
 } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
+const got = require('got');
+const FormData = require('form-data');
 
 // We'll initialize the store after imports
 let store;
@@ -26,7 +28,10 @@ async function initializeApp() {
     defaults: {
       saveDirectory: app.getPath('pictures'),
       saveToClipboard: true,
-      saveToFile: true
+      saveToFile: true,
+      enableRemoteUpload: false,
+      endpointUrl: '',
+      authToken: ''
     }
   });
   
@@ -217,7 +222,7 @@ ipcMain.on('cancel-capture', () => {
   }
 });
 
-function createToastWindow(message, screenshotPath) {
+function createToastWindow(message, screenshotPath, remoteUrl) {
   // Save the screenshot path for later use
   if (screenshotPath) {
     lastScreenshotPath = screenshotPath;
@@ -259,7 +264,8 @@ function createToastWindow(message, screenshotPath) {
   toastWindow.once('ready-to-show', () => {
     toastWindow.webContents.send('toast-data', {
       message: message,
-      hasPath: !!screenshotPath
+      hasPath: !!screenshotPath,
+      remoteUrl: remoteUrl
     });
     toastWindow.show();
   });
@@ -322,12 +328,24 @@ ipcMain.on('capture-screenshot', async (event, { x, y, width, height }) => {
       fs.ensureDirSync(saveDirectory);
       fs.writeFileSync(filePath, image.toPNG());
       
-      // Show toast notification with file path
-      createToastWindow('Screenshot saved!', filePath);
+      // Perform remote upload if enabled
+      let remoteUrl = null;
+      if (store.get('enableRemoteUpload')) {
+        remoteUrl = await uploadToRemoteServer(filePath);
+      }
+      
+      // Show toast notification with file path and/or remote URL
+      let message = 'Screenshot saved!';
+      if (remoteUrl) {
+        message = 'Screenshot saved and uploaded!';
+      }
+      
+      createToastWindow(message, filePath, remoteUrl);
       
       event.reply('screenshot-saved', {
         success: true,
-        path: filePath
+        path: filePath,
+        remoteUrl: remoteUrl
       });
     } else {
       // Show toast notification without file path
@@ -391,7 +409,10 @@ ipcMain.handle('get-settings', async () => {
   return {
     saveDirectory: store.get('saveDirectory'),
     saveToClipboard: store.get('saveToClipboard'),
-    saveToFile: store.get('saveToFile')
+    saveToFile: store.get('saveToFile'),
+    enableRemoteUpload: store.get('enableRemoteUpload'),
+    endpointUrl: store.get('endpointUrl'),
+    authToken: store.get('authToken')
   };
 });
 
@@ -404,6 +425,15 @@ ipcMain.on('set-settings', (event, settings) => {
   }
   if (typeof settings.saveToFile === 'boolean') {
     store.set('saveToFile', settings.saveToFile);
+  }
+  if (typeof settings.enableRemoteUpload === 'boolean') {
+    store.set('enableRemoteUpload', settings.enableRemoteUpload);
+  }
+  if (settings.endpointUrl) {
+    store.set('endpointUrl', settings.endpointUrl);
+  }
+  if (settings.authToken) {
+    store.set('authToken', settings.authToken);
   }
 });
 
@@ -423,6 +453,54 @@ ipcMain.on('open-save-directory', () => {
   const saveDirectory = store.get('saveDirectory');
   if (fs.existsSync(saveDirectory)) {
     shell.openPath(saveDirectory);
+  }
+});
+
+// Add a function to handle remote uploads
+async function uploadToRemoteServer(filePath) {
+  try {
+    // Check if remote upload is enabled and we have all required settings
+    if (!store.get('enableRemoteUpload')) {
+      return null;
+    }
+    
+    const endpointUrl = store.get('endpointUrl');
+    const authToken = store.get('authToken');
+    
+    if (!endpointUrl || !authToken) {
+      console.error('Remote upload settings are incomplete');
+      return null;
+    }
+    
+    // Create form data for the request
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath));
+    
+    // Make the request
+    const response = await got.post(endpointUrl, {
+      body: form,
+      headers: {
+        'x-wpms-auth': authToken
+      },
+      responseType: 'json'
+    });
+    
+    // Return the URL from the response
+    if (response.body && response.body.url) {
+      return response.body.url;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Failed to upload to remote server:', error);
+    return null;
+  }
+}
+
+// Add a new IPC handler to open the remote URL
+ipcMain.on('open-remote-url', (event, url) => {
+  if (url) {
+    shell.openExternal(url);
   }
 });
 
